@@ -14,7 +14,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread
 from PyQt6.QtGui import QIcon, QKeySequence, QAction
 
-from .sound_manager import SoundManager
 from .keybind_handler import KeybindHandler
 from .audio_player import AudioPlayer
 from .config import Config
@@ -27,10 +26,9 @@ class MainWindow(QMainWindow):
     keybind_changed = pyqtSignal(str, str)
     volume_changed = pyqtSignal(str, int)
 
-    def __init__(self, config, sound_manager, audio_player, keybind_handler):
+    def __init__(self, config, audio_player, keybind_handler):
         super().__init__()
         self.config = config
-        self.sound_manager = sound_manager
         self.audio_player = audio_player
         self.keybind_handler = keybind_handler
 
@@ -157,7 +155,7 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            self.sound_manager.add_sound(sound_name.strip(), file_path)
+            self.config.add_sound(sound_name.strip(), file_path)
             self.sound_added.emit(sound_name.strip(), file_path)
             self.status_bar.showMessage(f"Added sound: {sound_name}")
         except Exception as e:
@@ -179,7 +177,7 @@ class MainWindow(QMainWindow):
 
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                self.sound_manager.remove_sound(sound_name)
+                self.config.remove_sound(sound_name)
                 self.keybind_handler.remove_keybind(sound_name)
                 self.sound_removed.emit(sound_name)
                 self.status_bar.showMessage(f"Removed sound: {sound_name}")
@@ -214,14 +212,14 @@ class MainWindow(QMainWindow):
         volume = self.volume_slider.value()
 
         try:
-            self.sound_manager.set_volume(sound_name, volume)
+            self.config.set_sound_volume(sound_name, volume)
             self.volume_changed.emit(sound_name, volume)
             self.status_bar.showMessage(f"Set volume for {sound_name}: {volume}%")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to change volume: {e}")
 
     def load_saved_sounds(self):
-        for sound_name, sound_data in self.sound_manager.get_all_sounds().items():
+        for sound_name, sound_data in self.config.get_all_sounds().items():
             keybind = self.keybind_handler.get_keybind(sound_name)
             display_text = f"{sound_name} ({keybind or 'no keybind'})"
             self.sound_list.addItem(display_text)
@@ -296,7 +294,7 @@ class MainWindow(QMainWindow):
         current_item = self.sound_list.currentItem()
         if current_item:
             sound_name = current_item.text().split(" (")[0]
-            current_volume = self.sound_manager.get_sound_volume(sound_name)
+            current_volume = self.config.get_sound_volume(sound_name)
             self.volume_slider.setValue(current_volume)
 
     def closeEvent(self, event):

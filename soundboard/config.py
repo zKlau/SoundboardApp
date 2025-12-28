@@ -82,6 +82,15 @@ class Config:
         if name in self._config["sounds"]:
             del self._config["sounds"][name]
 
+    def set_sound_volume(self, name: str, volume: int):
+        if name in self._config["sounds"]:
+            self._config["sounds"][name]["volume"] = volume
+            self.save()
+
+    def get_sound_volume(self, name: str) -> int:
+        sound = self.get_sound(name)
+        return sound.get("volume", self.default_volume) if sound else self.default_volume
+
     def get_sound(self, name: str) -> Optional[Dict[str, Any]]:
         return self._config["sounds"].get(name)
 

@@ -5,7 +5,6 @@ import logging
 from PyQt6.QtWidgets import QApplication
 
 from .main_window import MainWindow
-from .sound_manager import SoundManager
 from .keybind_handler import KeybindHandler
 from .audio_player import AudioPlayer
 from .config import Config
@@ -16,7 +15,6 @@ class SoundboardApp:
         self.qt_app = None
         self.main_window = None
         self.config = None
-        self.sound_manager = None
         self.audio_player = None
         self.keybind_handler = None
         self.keybind_thread = None
@@ -46,14 +44,12 @@ class SoundboardApp:
 
     def initialize_components(self):
         self.config = Config()
-        self.sound_manager = SoundManager(self.config)
         self.audio_player = AudioPlayer(self.config)
         self.keybind_handler = KeybindHandler(self.config)
 
         self.setup_logging()
         self.main_window = MainWindow(
             self.config,
-            self.sound_manager,
             self.audio_player,
             self.keybind_handler
         )
