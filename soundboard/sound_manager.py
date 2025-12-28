@@ -139,7 +139,16 @@ class SoundManager:
             audio = AudioSegment.from_file(str(file_path))
             if len(audio) == 0:
                 raise RuntimeError("Audio file appears to be empty")
+
         except Exception as e:
+            self.logger.error(f"Failed to validate audio file {file_path}: {e}")
+
+            try:
+                import os
+                file_size = os.path.getsize(file_path)
+            except Exception:
+                pass
+
             raise RuntimeError(f"Cannot load audio file: {e}")
 
         dest_path = self.config.sounds_dir / f"{name}{file_path.suffix}"

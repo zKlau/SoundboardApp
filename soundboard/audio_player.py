@@ -139,8 +139,11 @@ class AudioPlayer:
             audio = self._load_and_process_audio(sound_path, volume)
 
             audio_data = np.array(audio.get_array_of_samples())
-            if audio.sample_width != 2:
-                audio_data = audio_data.astype(np.int16)
+
+            audio_data = audio_data.astype(np.int16)
+
+            if len(audio_data) == 0:
+                raise ValueError(f"No audio data found in file: {sound_path}")
 
             if volume != 100:
                 volume_scale = volume / 100.0
@@ -167,16 +170,53 @@ class AudioPlayer:
             if not self._playing_sounds:
                 self._is_playing = False
 
-    def _load_and_process_audio(self, sound_path: str, volume: int) -> AudioSegment:
-        
-        audio = AudioSegment.from_file(sound_path)
+    def _load_and_process_audio(self, sound_path: str, volume: int):
+        try:
+            audio = AudioSegment.from_file(sound_path)
 
-        audio = audio.set_channels(self._channels)
-        audio = audio.set_frame_rate(self._sample_rate)
+            if len(audio) == 0:
+                raise ValueError(f"Audio file appears to be empty: {sound_path}")
 
-        audio = normalize(audio)
+            original_channels = audio.channels
+            original_rate = audio.frame_rate
 
-        return audio
+            audio = audio.set_channels(self._channels)
+            audio = audio.set_frame_rate(self._sample_rate)
+
+            self.logger.debug(f"Loaded audio: {sound_path}, {original_channels}ch@{original_rate}Hz -> {audio.channels}ch@{audio.frame_rate}Hz, {len(audio)}ms")
+
+            return audio
+
+        except Exception as e:
+            error_msg = f"Failed to load audio file {sound_path}: {e}"
+
+            try:
+                self.logger.warning(f"Primary loading failed, trying fallback for {sound_path}")
+
+                if sound_path.lower().endswith(('.mp3', '.m4a')):
+                    audio = AudioSegment.from_file(sound_path, format="mp3")
+                elif sound_path.lower().endswith('.wav'):
+                    audio = AudioSegment.from_file(sound_path, format="wav")
+                else:
+                    raise e
+
+                if len(audio) == 0:
+                    raise ValueError(f"Fallback loading produced empty audio: {sound_path}")
+
+                audio = audio.set_channels(self._channels).set_frame_rate(self._sample_rate)
+                self.logger.info(f"Fallback loading succeeded for {sound_path}")
+                return audio
+
+            except Exception as fallback_e:
+                self.logger.error(f"Fallback loading also failed for {sound_path}: {fallback_e}")
+
+            self.logger.error(error_msg)
+            raise RuntimeError(f"Unable to load audio file. This may be due to:\n"
+                             f"• Unsupported audio format\n"
+                             f"• Corrupted audio file\n"
+                             f"• Missing audio codecs\n"
+                             f"• File currently in use by another application\n\n"
+                             f"Original error: {e}")
 
     def stop_playback(self):
         
@@ -347,14 +387,13 @@ class AudioPlayer:
             self._cleanup_routing_streams()
 
     def _mix_audio_with_sounds(self, input_data):
-        
         if not self._playing_sounds:
             return input_data
 
         input_array = np.frombuffer(input_data, dtype=np.int16)
         chunk_size = len(input_array)
 
-        mixed = input_array.astype(np.float32)
+        mixed = input_array.astype(np.float64)
 
         sounds_to_remove = []
         for sound in self._playing_sounds:
@@ -369,7 +408,7 @@ class AudioPlayer:
             sound['position'] = end_pos
 
             if len(sound_chunk) == chunk_size:
-                mixed += sound_chunk.astype(np.float32)
+                mixed += sound_chunk.astype(np.float64)
 
         for sound in sounds_to_remove:
             self._playing_sounds.remove(sound)
@@ -377,9 +416,7 @@ class AudioPlayer:
         if not self._playing_sounds:
             self._is_playing = False
 
-        max_val = np.max(np.abs(mixed))
-        if max_val > 32767:
-            mixed = mixed * (32767 / max_val)
+        np.clip(mixed, -32768, 32767, out=mixed)
 
         return mixed.astype(np.int16).tobytes()
 
