@@ -15,6 +15,8 @@ class KeybindHandler(QObject):
         self.logger = logging.getLogger(__name__)
 
         self._active_keybinds: Dict[str, str] = {}
+        self._pressed_keys: set = set()
+        self._modifier_state = {'ctrl': False, 'alt': False, 'shift': False}
         self._listening = False
 
         self._load_keybinds()
@@ -34,13 +36,6 @@ class KeybindHandler(QObject):
                 raise ValueError(f"Keybind '{keybind}' is already assigned to '{existing_sound}'")
 
         try:
-            keyboard.add_hotkey(
-                normalized_keybind,
-                self._on_keybind_pressed,
-                args=[sound_name],
-                suppress=True
-            )
-
             self._active_keybinds[sound_name] = normalized_keybind
             self.config.set_keybind(sound_name, normalized_keybind)
             self.config.save()
@@ -61,12 +56,6 @@ class KeybindHandler(QObject):
 
     def _remove_keybind(self, sound_name: str):
         if sound_name in self._active_keybinds:
-            keybind = self._active_keybinds[sound_name]
-            try:
-                keyboard.remove_hotkey(keybind)
-            except Exception as e:
-                self.logger.warning(f"Failed to remove keybind {keybind}: {e}")
-
             del self._active_keybinds[sound_name]
 
     def get_keybind(self, sound_name: str) -> Optional[str]:
@@ -78,6 +67,52 @@ class KeybindHandler(QObject):
     def _normalize_keybind(self, keybind: str) -> str:
         return keybind.lower().strip()
 
+    def _on_key_event(self, event):
+        if not self._listening:
+            return
+
+        key = event.name.lower()
+
+        if key in ['ctrl', 'alt', 'shift']:
+            if event.event_type == keyboard.KEY_DOWN:
+                self._modifier_state[key] = True
+            elif event.event_type == keyboard.KEY_UP:
+                self._modifier_state[key] = False
+            return
+
+        modifiers = []
+        if self._modifier_state['ctrl']:
+            modifiers.append('ctrl')
+        if self._modifier_state['alt']:
+            modifiers.append('alt')
+        if self._modifier_state['shift']:
+            modifiers.append('shift')
+
+        if modifiers:
+            keybind_str = '+'.join(modifiers + [key])
+        else:
+            keybind_str = key
+
+        if event.event_type == keyboard.KEY_DOWN:
+            if keybind_str not in self._pressed_keys:
+                self._pressed_keys.add(keybind_str)
+
+                for sound_name, bound_keybind in self._active_keybinds.items():
+                    if bound_keybind == keybind_str:
+                        self.logger.debug(f"Keybind pressed for sound: {sound_name}")
+                        self.keybind_pressed.emit(sound_name)
+                        break
+
+        elif event.event_type == keyboard.KEY_UP:
+            keys_to_remove = set()
+            for pressed_keybind in self._pressed_keys:
+                pressed_parts = set(pressed_keybind.split('+'))
+                if key in pressed_parts:
+                    keys_to_remove.add(pressed_keybind)
+
+            for keybind_to_remove in keys_to_remove:
+                self._pressed_keys.discard(keybind_to_remove)
+
     def _on_keybind_pressed(self, sound_name: str):
         self.logger.debug(f"Keybind pressed for sound: {sound_name}")
         self.keybind_pressed.emit(sound_name)
@@ -87,17 +122,12 @@ class KeybindHandler(QObject):
             return
 
         self._listening = True
+        self._pressed_keys.clear()
+        self._modifier_state = {'ctrl': False, 'alt': False, 'shift': False}
         self.logger.info("Started keybind listening")
 
         try:
-            for sound_name, keybind in self._active_keybinds.items():
-                keyboard.add_hotkey(
-                    keybind,
-                    self._on_keybind_pressed,
-                    args=[sound_name],
-                    suppress=True
-                )
-
+            keyboard.hook(self._on_key_event)
             keyboard.wait()
 
         except Exception as e:
@@ -110,16 +140,12 @@ class KeybindHandler(QObject):
             return
 
         self._listening = False
+        self._pressed_keys.clear()
+        self._modifier_state = {'ctrl': False, 'alt': False, 'shift': False}
         self.logger.info("Stopped keybind listening")
 
         try:
-            for keybind in self._active_keybinds.values():
-                try:
-                    keyboard.remove_hotkey(keybind)
-                except Exception as e:
-                    self.logger.warning(f"Failed to remove hotkey {keybind}: {e}")
-
-            keyboard.clear_all_hotkeys()
+            keyboard.unhook_all()
 
         except Exception as e:
             self.logger.error(f"Error stopping keybind listening: {e}")

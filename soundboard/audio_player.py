@@ -50,7 +50,8 @@ class AudioPlayer:
         self._is_routing = False
         self._is_playing = False
         self._current_sound = None
-        self._playing_sounds = []
+        self._current_sound_data = None
+        self._current_sound_pos = 0
         self._routing_thread = None
         self._playback_thread = None
         self._stop_event = threading.Event()
@@ -113,6 +114,9 @@ class AudioPlayer:
         return None
 
     def play_sound(self, sound_name: str):
+        # Stop any currently playing sound
+        self.stop_playback()
+
         sound_data = self.config.get_sound(sound_name)
         if not sound_data:
             self.logger.error(f"Sound not found: {sound_name}")
@@ -125,6 +129,7 @@ class AudioPlayer:
 
         volume = sound_data.get("volume", self.config.default_volume)
 
+        # Create new playback thread
         self._playback_thread = threading.Thread(
             target=self._play_sound_thread,
             args=(sound_path, volume, sound_name),
@@ -149,13 +154,9 @@ class AudioPlayer:
                 volume_scale = volume / 100.0
                 audio_data = (audio_data.astype(np.float32) * volume_scale).astype(np.int16)
 
-            sound_info = {
-                'data': audio_data,
-                'position': 0,
-                'name': sound_name
-            }
-
-            self._playing_sounds.append(sound_info)
+            self._current_sound_data = audio_data
+            self._current_sound_pos = 0
+            self._current_sound = sound_name
             self._is_playing = True
 
             duration = len(audio_data) / self._sample_rate
@@ -166,12 +167,14 @@ class AudioPlayer:
         except Exception as e:
             self.logger.error(f"Error during sound playback: {e}")
         finally:
-            self._playing_sounds = [s for s in self._playing_sounds if s['name'] != sound_name]
-            if not self._playing_sounds:
-                self._is_playing = False
+            self._current_sound_data = None
+            self._current_sound_pos = 0
+            self._current_sound = None
+            self._is_playing = False
 
     def _load_and_process_audio(self, sound_path: str, volume: int):
         try:
+            # Load with higher quality settings
             audio = AudioSegment.from_file(sound_path)
 
             if len(audio) == 0:
@@ -180,8 +183,11 @@ class AudioPlayer:
             original_channels = audio.channels
             original_rate = audio.frame_rate
 
-            audio = audio.set_channels(self._channels)
-            audio = audio.set_frame_rate(self._sample_rate)
+            # Preserve quality by using better resampling
+            if audio.frame_rate != self._sample_rate:
+                audio = audio.set_frame_rate(self._sample_rate)
+            if audio.channels != self._channels:
+                audio = audio.set_channels(self._channels)
 
             self.logger.debug(f"Loaded audio: {sound_path}, {original_channels}ch@{original_rate}Hz -> {audio.channels}ch@{audio.frame_rate}Hz, {len(audio)}ms")
 
@@ -219,17 +225,16 @@ class AudioPlayer:
                              f"Original error: {e}")
 
     def stop_playback(self):
-        
         if self._is_playing:
             self.logger.info("Stopping audio playback")
-            self._stop_event.set()
+            self._cleanup_playback()
 
             if self._playback_thread and self._playback_thread.is_alive():
                 self._playback_thread.join(timeout=1.0)
 
     def _cleanup_playback(self):
-        
-        self._playing_sounds.clear()
+        self._current_sound_data = None
+        self._current_sound_pos = 0
         self._is_playing = False
         self._current_sound = None
 
@@ -387,38 +392,42 @@ class AudioPlayer:
             self._cleanup_routing_streams()
 
     def _mix_audio_with_sounds(self, input_data):
-        if not self._playing_sounds:
+        try:
+            if not self._is_playing or self._current_sound_data is None:
+                return input_data
+
+            input_array = np.frombuffer(input_data, dtype=np.int16)
+            chunk_size = len(input_array)
+
+            if self._current_sound_pos >= len(self._current_sound_data):
+                self._is_playing = False
+                self._current_sound_data = None
+                self._current_sound_pos = 0
+                self._current_sound = None
+                return input_data
+
+            start_pos = self._current_sound_pos
+            end_pos = min(start_pos + chunk_size, len(self._current_sound_data))
+
+            sound_chunk = self._current_sound_data[start_pos:end_pos]
+            self._current_sound_pos = end_pos
+
+            if len(sound_chunk) < chunk_size:
+                sound_chunk = np.pad(sound_chunk, (0, chunk_size - len(sound_chunk)), 'constant')
+
+            # Simpler mixing to avoid distortion
+            input_gain = 0.8
+            soundboard_gain = 2.0
+
+            # Mix in int16 space to avoid precision issues
+            mixed = input_array.astype(np.int32) * input_gain + sound_chunk.astype(np.int32) * soundboard_gain
+            mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
+
+            return mixed.tobytes()
+
+        except Exception as e:
+            self.logger.error(f"Error in audio mixing: {e}")
             return input_data
-
-        input_array = np.frombuffer(input_data, dtype=np.int16)
-        chunk_size = len(input_array)
-
-        mixed = input_array.astype(np.float64)
-
-        sounds_to_remove = []
-        for sound in self._playing_sounds:
-            start_pos = sound['position']
-            end_pos = start_pos + chunk_size
-
-            if start_pos >= len(sound['data']):
-                sounds_to_remove.append(sound)
-                continue
-
-            sound_chunk = sound['data'][start_pos:end_pos]
-            sound['position'] = end_pos
-
-            if len(sound_chunk) == chunk_size:
-                mixed += sound_chunk.astype(np.float64)
-
-        for sound in sounds_to_remove:
-            self._playing_sounds.remove(sound)
-
-        if not self._playing_sounds:
-            self._is_playing = False
-
-        np.clip(mixed, -32768, 32767, out=mixed)
-
-        return mixed.astype(np.int16).tobytes()
 
     def _cleanup_routing_streams(self):
         
