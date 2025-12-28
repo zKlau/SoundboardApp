@@ -19,11 +19,7 @@ class Config:
                 "channels": 2
             },
             "sounds": {},
-            "keybinds": {},
-            "ui": {
-                "window_geometry": [100, 100, 600, 500],
-                "always_on_top": False
-            }
+            "keybinds": {}
         }
 
         self._ensure_directories()

@@ -12,13 +12,12 @@ from PyQt6.QtWidgets import (
     QProgressBar, QFrame, QComboBox, QGroupBox
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread
-from PyQt6.QtGui import QIcon, QKeySequence, QAction
+from PyQt6.QtGui import QIcon, QAction
 
 from .keybind_handler import KeybindHandler
 from .audio_player import AudioPlayer
 from .config import Config
 from .dialogs import KeybindDialog
-
 
 class MainWindow(QMainWindow):
     sound_added = pyqtSignal(str, str)
