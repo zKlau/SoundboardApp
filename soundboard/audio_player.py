@@ -114,7 +114,6 @@ class AudioPlayer:
         return None
 
     def play_sound(self, sound_name: str):
-        # Stop any currently playing sound
         self.stop_playback()
 
         sound_data = self.config.get_sound(sound_name)
@@ -129,7 +128,6 @@ class AudioPlayer:
 
         volume = sound_data.get("volume", self.config.default_volume)
 
-        # Create new playback thread
         self._playback_thread = threading.Thread(
             target=self._play_sound_thread,
             args=(sound_path, volume, sound_name),
@@ -149,10 +147,6 @@ class AudioPlayer:
 
             if len(audio_data) == 0:
                 raise ValueError(f"No audio data found in file: {sound_path}")
-
-            if volume != 100:
-                volume_scale = volume / 100.0
-                audio_data = (audio_data.astype(np.float32) * volume_scale).astype(np.int16)
 
             self._current_sound_data = audio_data
             self._current_sound_pos = 0
@@ -174,7 +168,6 @@ class AudioPlayer:
 
     def _load_and_process_audio(self, sound_path: str, volume: int):
         try:
-            # Load with higher quality settings
             audio = AudioSegment.from_file(sound_path)
 
             if len(audio) == 0:
@@ -183,11 +176,10 @@ class AudioPlayer:
             original_channels = audio.channels
             original_rate = audio.frame_rate
 
-            # Preserve quality by using better resampling
-            if audio.frame_rate != self._sample_rate:
-                audio = audio.set_frame_rate(self._sample_rate)
             if audio.channels != self._channels:
                 audio = audio.set_channels(self._channels)
+            if audio.frame_rate != self._sample_rate:
+                audio = audio.set_frame_rate(self._sample_rate)
 
             self.logger.debug(f"Loaded audio: {sound_path}, {original_channels}ch@{original_rate}Hz -> {audio.channels}ch@{audio.frame_rate}Hz, {len(audio)}ms")
 
@@ -415,12 +407,11 @@ class AudioPlayer:
             if len(sound_chunk) < chunk_size:
                 sound_chunk = np.pad(sound_chunk, (0, chunk_size - len(sound_chunk)), 'constant')
 
-            # Simpler mixing to avoid distortion
-            input_gain = 0.8
-            soundboard_gain = 2.0
+            volume = self.config.get_sound(self._current_sound).get("volume", self.config.default_volume) / 100.0
+            input_gain = 0.6
+            soundboard_gain = 3.0 * volume
 
-            # Mix in int16 space to avoid precision issues
-            mixed = input_array.astype(np.int32) * input_gain + sound_chunk.astype(np.int32) * soundboard_gain
+            mixed = (input_array.astype(np.int32) * input_gain) + (sound_chunk.astype(np.int32) * soundboard_gain)
             mixed = np.clip(mixed, -32768, 32767).astype(np.int16)
 
             return mixed.tobytes()

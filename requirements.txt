@@ -1,0 +1,8 @@
+PyQt6>=6.4.0
+pyaudio>=0.2.13
+keyboard>=0.13.5
+pydub>=0.25.1
+pygame>=2.5.0
+numpy>=1.24.0
+pywin32>=306; sys_platform == 'win32'
+ffmpeg-python>=0.2.0
