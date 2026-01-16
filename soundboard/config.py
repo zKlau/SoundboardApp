@@ -24,6 +24,7 @@ class Config:
 
         self._ensure_directories()
         self.load()
+        self._auto_save_enabled = True
 
     def _ensure_directories(self):
         self.app_dir.mkdir(exist_ok=True)
@@ -44,6 +45,10 @@ class Config:
                 json.dump(self._config, f, indent=2, ensure_ascii=False)
         except IOError as e:
             print(f"Warning: Could not save config file: {e}")
+
+    def _auto_save(self):
+        if getattr(self, '_auto_save_enabled', False):
+            self.save()
 
     def get(self, key: str, default: Any = None) -> Any:
         keys = key.split('.')
@@ -69,19 +74,17 @@ class Config:
         config[keys[-1]] = value
 
     def add_sound(self, name: str, path: str, volume: int = 80):
-        self._config["sounds"][name] = {
-            "path": str(path),
-            "volume": volume
-        }
+        self._config["sounds"][name] = {"path": str(path), "volume": volume}
+        self._auto_save()
 
     def remove_sound(self, name: str):
-        if name in self._config["sounds"]:
-            del self._config["sounds"][name]
+        self._config["sounds"].pop(name, None)
+        self._auto_save()
 
     def set_sound_volume(self, name: str, volume: int):
         if name in self._config["sounds"]:
             self._config["sounds"][name]["volume"] = volume
-            self.save()
+            self._auto_save()
 
     def get_sound_volume(self, name: str) -> int:
         sound = self.get_sound(name)
@@ -95,13 +98,14 @@ class Config:
 
     def set_keybind(self, sound_name: str, keybind: str):
         self._config["keybinds"][sound_name] = keybind
+        self._auto_save()
 
     def get_keybind(self, sound_name: str) -> Optional[str]:
         return self._config["keybinds"].get(sound_name)
 
     def remove_keybind(self, sound_name: str):
-        if sound_name in self._config["keybinds"]:
-            del self._config["keybinds"][sound_name]
+        self._config["keybinds"].pop(sound_name, None)
+        self._auto_save()
 
     def get_all_keybinds(self) -> Dict[str, str]:
         return self._config["keybinds"].copy()

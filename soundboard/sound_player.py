@@ -30,6 +30,10 @@ class SoundPlayer:
         self._playback_thread = None
 
     def play_sound(self, sound_name: str):
+        if self._is_playing:
+            self.stop_playback()
+            time.sleep(0.05)
+        
         sound_data = self.config.get_sound(sound_name)
         if not sound_data:
             self.logger.error(f"Sound not found: {sound_name}")
@@ -51,15 +55,10 @@ class SoundPlayer:
 
     def _play_sound_thread(self, sound_path: str, volume: int, sound_name: str):
         try:
-            self.logger.info(f"Playing sound: {sound_path} at volume {volume}%")
+            self.logger.info(f"Playing: {sound_path} @ {volume}%")
 
             audio = self._load_and_process_audio(sound_path, volume)
-
-            audio_data = np.array(audio.get_array_of_samples())
-            audio_data = audio_data.astype(np.int16)
-
-            if len(audio_data) == 0:
-                raise ValueError(f"No audio data found in file: {sound_path}")
+            audio_data = np.array(audio.get_array_of_samples(), dtype=np.int16)
 
             self._current_sound_data = audio_data
             self._current_sound_pos = 0
@@ -69,15 +68,12 @@ class SoundPlayer:
             duration = len(audio_data) / self._sample_rate
             time.sleep(duration)
 
-            self.logger.info(f"Sound playback completed: {sound_name}")
+            self.logger.info(f"Completed: {sound_name}")
 
         except Exception as e:
-            self.logger.error(f"Error during sound playback: {e}")
+            self.logger.error(f"Playback error: {e}")
         finally:
-            self._current_sound_data = None
-            self._current_sound_pos = 0
-            self._current_sound = None
-            self._is_playing = False
+            self._cleanup_playback()
 
     def _load_and_process_audio(self, sound_path: str, volume: int):
         try:
@@ -86,16 +82,20 @@ class SoundPlayer:
             if len(audio) == 0:
                 raise ValueError(f"Audio file appears to be empty: {sound_path}")
 
-            original_channels = audio.channels
-            original_rate = audio.frame_rate
-
-            if audio.channels != self._channels:
-                audio = audio.set_channels(self._channels)
+            if audio.sample_width != 2:
+                audio = audio.set_sample_width(2)
+            
             if audio.frame_rate != self._sample_rate:
                 audio = audio.set_frame_rate(self._sample_rate)
+            
+            if audio.channels != self._channels:
+                audio = audio.set_channels(self._channels)
+            
+            volume_adjustment = (volume / 100.0) - 1.0
+            if abs(volume_adjustment) > 0.01:
+                audio = audio + (volume_adjustment * 20)
 
-            self.logger.debug(f"Loaded audio: {sound_path}, {original_channels}ch@{original_rate}Hz -> {audio.channels}ch@{audio.frame_rate}Hz")
-
+            self.logger.debug(f"Loaded: {sound_path} -> {audio.channels}ch@{audio.frame_rate}Hz")
             return audio
 
         except Exception as e:
@@ -104,17 +104,16 @@ class SoundPlayer:
 
     def stop_playback(self):
         if self._is_playing:
-            self.logger.info("Stopping audio playback")
+            self.logger.info("Stopping playback")
             self._cleanup_playback()
-
             if self._playback_thread and self._playback_thread.is_alive():
                 self._playback_thread.join(timeout=1.0)
 
     def _cleanup_playback(self):
         self._current_sound_data = None
         self._current_sound_pos = 0
-        self._is_playing = False
         self._current_sound = None
+        self._is_playing = False
 
     def is_playing(self) -> bool:
         return self._is_playing
@@ -128,14 +127,21 @@ class SoundPlayer:
     def get_current_sound_pos(self) -> int:
         return self._current_sound_pos
 
-    @property
-    def current_sound_data(self):
-        return self._current_sound_data
-
-    @property
-    def current_sound_pos(self):
-        return self._current_sound_pos
-
-    @current_sound_pos.setter
-    def current_sound_pos(self, value):
-        self._current_sound_pos = value
+    def get_next_audio_chunk(self, chunk_size: int) -> Optional[np.ndarray]:
+        if not self._is_playing or self._current_sound_data is None:
+            return None
+        
+        if self._current_sound_pos >= len(self._current_sound_data):
+            self._cleanup_playback()
+            return None
+        
+        start_pos = self._current_sound_pos
+        end_pos = min(start_pos + chunk_size, len(self._current_sound_data))
+        
+        sound_chunk = self._current_sound_data[start_pos:end_pos]
+        self._current_sound_pos = end_pos
+        
+        if len(sound_chunk) < chunk_size:
+            sound_chunk = np.pad(sound_chunk, (0, chunk_size - len(sound_chunk)), 'constant')
+        
+        return sound_chunk

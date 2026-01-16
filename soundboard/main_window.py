@@ -1,17 +1,15 @@
 import sys
-import json
-import threading
 from pathlib import Path
-from typing import Dict, List, Optional, Callable
+from typing import Optional
 import logging
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QListWidget, QListWidgetItem, QPushButton, QSlider, QLabel,
     QFileDialog, QInputDialog, QMessageBox, QSystemTrayIcon, QMenu,
-    QProgressBar, QFrame, QComboBox, QGroupBox
+    QProgressBar, QComboBox, QGroupBox
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QIcon, QAction
 
 from .keybind_handler import KeybindHandler
@@ -38,6 +36,12 @@ class MainWindow(QMainWindow):
 
         self.setup_system_tray()
 
+    def _get_selected_sound_name(self) -> Optional[str]:
+        current_item = self.sound_list.currentItem()
+        if not current_item:
+            return None
+        return current_item.text().split(" (")[0]
+
     def setup_ui(self):
         self.setWindowTitle("Soundboard")
         self.setGeometry(100, 100, 600, 500)
@@ -56,13 +60,10 @@ class MainWindow(QMainWindow):
 
         button_layout = QHBoxLayout()
 
-        self.add_button = QPushButton("Add Sound")
-        self.add_button.clicked.connect(self.add_sound)
-        button_layout.addWidget(self.add_button)
-
-        self.remove_button = QPushButton("Remove Sound")
-        self.remove_button.clicked.connect(self.remove_sound)
-        button_layout.addWidget(self.remove_button)
+        for text, handler in [("Add Sound", self.add_sound), ("Remove Sound", self.remove_sound)]:
+            btn = QPushButton(text)
+            btn.clicked.connect(handler)
+            button_layout.addWidget(btn)
 
         self.volume_slider = QSlider(Qt.Orientation.Horizontal)
         self.volume_slider.setRange(0, 100)
@@ -76,19 +77,17 @@ class MainWindow(QMainWindow):
         device_group = QGroupBox("Audio Devices")
         device_layout = QVBoxLayout()
 
-        input_layout = QHBoxLayout()
-        input_layout.addWidget(QLabel("Input Microphone:"))
-        self.input_device_combo = QComboBox()
-        self.input_device_combo.currentIndexChanged.connect(self.on_input_device_changed)
-        input_layout.addWidget(self.input_device_combo)
-        device_layout.addLayout(input_layout)
-
-        output_layout = QHBoxLayout()
-        output_layout.addWidget(QLabel("Output Microphone:"))
-        self.output_device_combo = QComboBox()
-        self.output_device_combo.currentIndexChanged.connect(self.on_output_device_changed)
-        output_layout.addWidget(self.output_device_combo)
-        device_layout.addLayout(output_layout)
+        for label, combo_attr, handler in [
+            ("Input Microphone:", 'input_device_combo', self.on_input_device_changed),
+            ("Output Microphone:", 'output_device_combo', self.on_output_device_changed)
+        ]:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label))
+            combo = QComboBox()
+            combo.currentIndexChanged.connect(handler)
+            setattr(self, combo_attr, combo)
+            row.addWidget(combo)
+            device_layout.addLayout(row)
 
         device_group.setLayout(device_layout)
         layout.addWidget(device_group)
@@ -116,21 +115,19 @@ class MainWindow(QMainWindow):
         self.keybind_changed.connect(self.on_keybind_changed)
         self.volume_changed.connect(self.on_volume_changed)
 
+        self.keybind_handler.set_sound_player(self.audio_player.sound_player)
         self.keybind_handler.keybind_pressed.connect(self.audio_player.play_sound)
 
     def setup_system_tray(self):
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(QIcon("icons/soundboard.png"))
-
+        
         tray_menu = QMenu()
-        show_action = QAction("Show", self)
-        show_action.triggered.connect(self.show)
-        tray_menu.addAction(show_action)
-
-        quit_action = QAction("Quit", self)
-        quit_action.triggered.connect(self.close)
-        tray_menu.addAction(quit_action)
-
+        for text, handler in [("Show", self.show), ("Quit", self.close)]:
+            action = QAction(text, self)
+            action.triggered.connect(handler)
+            tray_menu.addAction(action)
+        
         self.tray_icon.setContextMenu(tray_menu)
         self.tray_icon.show()
 
@@ -156,17 +153,15 @@ class MainWindow(QMainWindow):
         try:
             self.config.add_sound(sound_name.strip(), file_path)
             self.sound_added.emit(sound_name.strip(), file_path)
-            self.status_bar.showMessage(f"Added sound: {sound_name}")
+            self.status_bar.showMessage(f"Added: {sound_name}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to add sound: {e}")
 
     def remove_sound(self):
-        current_item = self.sound_list.currentItem()
-        if not current_item:
+        sound_name = self._get_selected_sound_name()
+        if not sound_name:
             QMessageBox.warning(self, "Warning", "Please select a sound to remove.")
             return
-
-        sound_name = current_item.text().split(" (")[0]
 
         reply = QMessageBox.question(
             self, "Confirm Removal",
@@ -184,12 +179,10 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to remove sound: {e}")
 
     def set_keybind(self):
-        current_item = self.sound_list.currentItem()
-        if not current_item:
+        sound_name = self._get_selected_sound_name()
+        if not sound_name:
             QMessageBox.warning(self, "Warning", "Please select a sound first.")
             return
-
-        sound_name = current_item.text().split(" (")[0]
 
         dialog = KeybindDialog(self)
         if dialog.exec():
@@ -203,11 +196,9 @@ class MainWindow(QMainWindow):
                     QMessageBox.critical(self, "Error", f"Failed to set keybind: {e}")
 
     def change_volume(self):
-        current_item = self.sound_list.currentItem()
-        if not current_item:
+        sound_name = self._get_selected_sound_name()
+        if not sound_name:
             return
-
-        sound_name = current_item.text().split(" (")[0]
         volume = self.volume_slider.value()
 
         try:
@@ -231,14 +222,14 @@ class MainWindow(QMainWindow):
     def on_sound_removed(self, name):
         for i in range(self.sound_list.count()):
             item = self.sound_list.item(i)
-            if item.text().startswith(f"{name} ("):
+            if self._get_sound_name_from_item(item) == name:
                 self.sound_list.takeItem(i)
                 break
 
     def on_keybind_changed(self, sound_name, keybind):
         for i in range(self.sound_list.count()):
             item = self.sound_list.item(i)
-            if item.text().startswith(f"{sound_name} ("):
+            if self._get_sound_name_from_item(item) == sound_name:
                 item.setText(f"{sound_name} ({keybind})")
                 break
 
@@ -246,18 +237,14 @@ class MainWindow(QMainWindow):
         pass
 
     def populate_audio_devices(self):
-        input_devices = self.audio_player.get_input_devices()
-        output_devices = self.audio_player.get_output_devices()
-
-        self.input_device_combo.clear()
-        self.output_device_combo.clear()
-
-        for device in input_devices:
-            self.input_device_combo.addItem(device['name'], device['index'])
-
-        for device in output_devices:
-            self.output_device_combo.addItem(device['name'], device['index'])
-
+        for combo, get_devices in [
+            (self.input_device_combo, self.audio_player.get_input_devices),
+            (self.output_device_combo, self.audio_player.get_output_devices)
+        ]:
+            combo.clear()
+            for device in get_devices():
+                combo.addItem(device['name'], device['index'])
+        
         self.select_default_devices()
 
     def select_default_devices(self):
@@ -270,19 +257,25 @@ class MainWindow(QMainWindow):
         if self.input_device_combo.count() > 0:
             self.input_device_combo.setCurrentIndex(0)
 
-    def on_input_device_changed(self, index):
-        if index >= 0:
-            device_index = self.input_device_combo.itemData(index)
+    def _on_device_changed(self, index: int, is_input: bool):
+        if index < 0:
+            return
+        combo = self.input_device_combo if is_input else self.output_device_combo
+        device_index = combo.itemData(index)
+        
+        if is_input:
             self.audio_player.set_input_device(device_index)
-            self.status_bar.showMessage(f"Input device changed to: {self.input_device_combo.currentText()}")
-            self.start_audio_routing_if_ready()
+        else:
+            self.audio_player.set_output_device(device_index)
+        
+        self.status_bar.showMessage(f"{'Input' if is_input else 'Output'} device: {combo.currentText()}")
+        self.start_audio_routing_if_ready()
+
+    def on_input_device_changed(self, index):
+        self._on_device_changed(index, True)
 
     def on_output_device_changed(self, index):
-        if index >= 0:
-            device_index = self.output_device_combo.itemData(index)
-            self.audio_player.set_output_device(device_index)
-            self.status_bar.showMessage(f"Output device changed to: {self.output_device_combo.currentText()}")
-            self.start_audio_routing_if_ready()
+        self._on_device_changed(index, False)
 
     def start_audio_routing_if_ready(self):
         if (self.input_device_combo.currentIndex() >= 0 and
@@ -290,11 +283,15 @@ class MainWindow(QMainWindow):
             self.audio_player.start_audio_routing()
 
     def on_sound_selected(self):
-        current_item = self.sound_list.currentItem()
-        if current_item:
-            sound_name = current_item.text().split(" (")[0]
+        sound_name = self._get_selected_sound_name()
+        if sound_name:
             current_volume = self.config.get_sound_volume(sound_name)
             self.volume_slider.setValue(current_volume)
+
+    def _get_sound_name_from_item(self, item) -> Optional[str]:
+        if not item:
+            return None
+        return item.text().split(" (")[0]
 
     def closeEvent(self, event):
         self.config.save()

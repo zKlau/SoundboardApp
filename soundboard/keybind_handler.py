@@ -18,8 +18,12 @@ class KeybindHandler(QObject):
         self._pressed_keys: set = set()
         self._modifier_state = {'ctrl': False, 'alt': False, 'shift': False}
         self._listening = False
+        self._sound_player = None
 
         self._load_keybinds()
+    
+    def set_sound_player(self, sound_player):
+        self._sound_player = sound_player
 
     def _load_keybinds(self):
         for sound_name, keybind in self.config.get_all_keybinds().items():
@@ -27,36 +31,27 @@ class KeybindHandler(QObject):
 
     def set_keybind(self, sound_name: str, keybind: str):
         if sound_name in self._active_keybinds:
-            self._remove_keybind(sound_name)
+            del self._active_keybinds[sound_name]
 
         normalized_keybind = self._normalize_keybind(keybind)
 
         for existing_sound, existing_keybind in self._active_keybinds.items():
             if existing_keybind == normalized_keybind and existing_sound != sound_name:
-                raise ValueError(f"Keybind '{keybind}' is already assigned to '{existing_sound}'")
+                raise ValueError(f"Keybind already assigned to '{existing_sound}'")
 
         try:
             self._active_keybinds[sound_name] = normalized_keybind
             self.config.set_keybind(sound_name, normalized_keybind)
-            self.config.save()
-
-            self.logger.info(f"Set keybind for {sound_name}: {normalized_keybind}")
-
+            self.logger.info(f"Keybind set: {sound_name} -> {normalized_keybind}")
         except Exception as e:
-            if sound_name in self._active_keybinds:
-                del self._active_keybinds[sound_name]
+            self._active_keybinds.pop(sound_name, None)
             raise RuntimeError(f"Failed to register keybind: {e}")
 
     def remove_keybind(self, sound_name: str):
         if sound_name in self._active_keybinds:
-            self._remove_keybind(sound_name)
-            self.config.remove_keybind(sound_name)
-            self.config.save()
-            self.logger.info(f"Removed keybind for {sound_name}")
-
-    def _remove_keybind(self, sound_name: str):
-        if sound_name in self._active_keybinds:
             del self._active_keybinds[sound_name]
+            self.config.remove_keybind(sound_name)
+            self.logger.info(f"Removed keybind: {sound_name}")
 
     def get_keybind(self, sound_name: str) -> Optional[str]:
         return self._active_keybinds.get(sound_name)
@@ -74,81 +69,55 @@ class KeybindHandler(QObject):
         key = event.name.lower()
 
         if key in ['ctrl', 'alt', 'shift']:
-            if event.event_type == keyboard.KEY_DOWN:
-                self._modifier_state[key] = True
-            elif event.event_type == keyboard.KEY_UP:
-                self._modifier_state[key] = False
+            self._modifier_state[key] = (event.event_type == keyboard.KEY_DOWN)
             return
 
-        modifiers = []
-        if self._modifier_state['ctrl']:
-            modifiers.append('ctrl')
-        if self._modifier_state['alt']:
-            modifiers.append('alt')
-        if self._modifier_state['shift']:
-            modifiers.append('shift')
-
-        if modifiers:
-            keybind_str = '+'.join(modifiers + [key])
-        else:
-            keybind_str = key
+        modifiers = [m for m, pressed in self._modifier_state.items() if pressed]
+        keybind_str = '+'.join(modifiers + [key]) if modifiers else key
 
         if event.event_type == keyboard.KEY_DOWN:
             if keybind_str not in self._pressed_keys:
                 self._pressed_keys.add(keybind_str)
-
+                
+                if self._sound_player and self._sound_player.is_playing():
+                    return
+                
                 for sound_name, bound_keybind in self._active_keybinds.items():
                     if bound_keybind == keybind_str:
-                        self.logger.debug(f"Keybind pressed for sound: {sound_name}")
+                        self.logger.debug(f"Triggered: {sound_name}")
                         self.keybind_pressed.emit(sound_name)
                         break
-
         elif event.event_type == keyboard.KEY_UP:
-            keys_to_remove = set()
-            for pressed_keybind in self._pressed_keys:
-                pressed_parts = set(pressed_keybind.split('+'))
-                if key in pressed_parts:
-                    keys_to_remove.add(pressed_keybind)
+            self._pressed_keys = {kb for kb in self._pressed_keys if key not in kb.split('+')}
 
-            for keybind_to_remove in keys_to_remove:
-                self._pressed_keys.discard(keybind_to_remove)
-
-    def _on_keybind_pressed(self, sound_name: str):
-        self.logger.debug(f"Keybind pressed for sound: {sound_name}")
-        self.keybind_pressed.emit(sound_name)
+    def _reset_state(self):
+        self._pressed_keys.clear()
+        self._modifier_state = {'ctrl': False, 'alt': False, 'shift': False}
 
     def start_listening(self):
         if self._listening:
             return
-
         self._listening = True
-        self._pressed_keys.clear()
-        self._modifier_state = {'ctrl': False, 'alt': False, 'shift': False}
-        self.logger.info("Started keybind listening")
-
+        self._reset_state()
+        self.logger.info("Keybind listening started")
         try:
             keyboard.hook(self._on_key_event)
             keyboard.wait()
-
         except Exception as e:
-            self.logger.error(f"Error in keybind listening: {e}")
+            self.logger.error(f"Listening error: {e}")
         finally:
             self._listening = False
 
     def stop_listening(self):
         if not self._listening:
             return
-
         self._listening = False
-        self._pressed_keys.clear()
-        self._modifier_state = {'ctrl': False, 'alt': False, 'shift': False}
-        self.logger.info("Stopped keybind listening")
-
+        self._reset_state()
+        self.logger.info("Keybind listening stopped")
         try:
             keyboard.unhook_all()
-
         except Exception as e:
-            self.logger.error(f"Error stopping keybind listening: {e}")
+            self.logger.error(f"Stop error: {e}")
 
     def is_listening(self) -> bool:
         return self._listening

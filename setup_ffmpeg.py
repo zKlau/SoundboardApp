@@ -73,23 +73,25 @@ def download_ffmpeg():
     return True
 
 def check_ffmpeg():
-    """Check if FFmpeg is available."""
-    import subprocess
-
-    components = ['ffmpeg', 'ffprobe']
-    available = []
-
-    for component in components:
-        try:
-            result = subprocess.run([component, '-version'],
-                                  capture_output=True,
-                                  check=True,
-                                  creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-            available.append(component)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
-
-    return available
+    try:
+        from soundboard.utils import check_ffmpeg_availability
+        missing = check_ffmpeg_availability()
+        components = ['ffmpeg', 'ffprobe']
+        return [c for c in components if c not in missing]
+    except ImportError:
+        import subprocess
+        components = ['ffmpeg', 'ffprobe']
+        available = []
+        for component in components:
+            try:
+                subprocess.run([component, '-version'],
+                              capture_output=True,
+                              check=True,
+                              creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                available.append(component)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                pass
+        return available
 
 def main():
     print("Soundboard FFmpeg Setup")
